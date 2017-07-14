@@ -26,9 +26,11 @@ for item in config:
 
 print(channels)
 
-host = ""
-port = 6666
 
+#[===============]#
+host = "" #Change this
+port = 6666 #Change this
+#[===============]#
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 try:
