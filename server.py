@@ -26,14 +26,13 @@ for item in config:
 
 print(channels)
 
+host = ""
+port = 6666
 
-#[===============]#
-host = "" #Change this
-port = 6666 #Change this
-#[===============]#
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 try:
+    #s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
     s.bind((host, port))
 except socket.error as e:
     print(e)
@@ -103,56 +102,67 @@ def client_connection_thread(conn, addr):
     conn.send(encode(message))
 
     while True:
-        data = conn.recv(1024)
-        data = decode(data)
-        if data["msgtype"] == "MSG-SB":
-            for cl in clients:
-                if cl["channel"] == data["channel"]:
-                    message = {
-                    "data": data["data"],
-                    "msgtype": "MSG-CB",
-                    "channel": data["channel"]
+        try:
+            data = conn.recv(1024)
+        
+            data = decode(data)
+            if data["msgtype"] == "MSG-SB":
+                for cl in clients:
+                    if cl["channel"] == data["channel"]:
+                        message = {
+                        "data": data["data"],
+                        "msgtype": "MSG-CB",
+                        "channel": data["channel"]
+                        }
+                        cl["conn"].send(encode(message))
+                    
+            elif data["msgtype"] == "CHANNELJOIN":
+                old_channel = user["channel"]
+                user["channel"] = data["data"]
+                channel_clients_list = []
+                for cl in clients:
+                    if cl["channel"] == user["channel"]:
+                        channel_clients_list.append(cl["username"])
+                    else:
+                        pass
+                message = {
+                    "data": channel_clients_list,
+                    "msgtype": "CHANNELCLIENTS",
+                    "channel": ""
                     }
-                    cl["conn"].send(encode(message))
-                
-        elif data["msgtype"] == "CHANNELJOIN":
-            old_channel = user["channel"]
-            user["channel"] = data["data"]
-            channel_clients_list = []
-            for cl in clients:
-                if cl["channel"] == user["channel"]:
-                    channel_clients_list.append(cl["username"])
-                else:
-                    pass
-            message = {
-                "data": channel_clients_list,
-                "msgtype": "CHANNELCLIENTS",
-                "channel": ""
-                }
-            for cl in clients:
-                if cl["channel"] == user["channel"]:
-                    message = {
-                        "data": channel_clients_list,
-                        "msgtype": "CHANNELCLIENTS",
-                        "channel": ""
-                        }
-                    cl["conn"].send(encode(message))
-                elif cl["channel"] != user["channel"]:
-                    message = {
-                        "data": user["username"],
-                        "msgtype": "CLIENTDISCONN",
-                        "channel": old_channel
-                        }
-                    cl["conn"].send(encode(message))
-                else:
-                    pass
-
-
-    
-            
-    
-    
-    
+                for cl in clients:
+                    if cl["channel"] == user["channel"]:
+                        message = {
+                            "data": channel_clients_list,
+                            "msgtype": "CHANNELCLIENTS",
+                            "channel": ""
+                            }
+                        cl["conn"].send(encode(message))
+                    elif cl["channel"] != user["channel"]:
+                        message = {
+                            "data": user["username"],
+                            "msgtype": "CLIENTDISCONN",
+                            "channel": old_channel
+                            }
+                        cl["conn"].send(encode(message))
+                    else:
+                        pass
+            elif data["msgtype"] == "USERLIST":
+                print("Yes")
+                server_clients_list = []
+                for cl in clients:
+                    server_clients_list.append(cl["username"])
+                message = {
+                    "data": server_clients_list,
+                    "msgtype": "USERLIST",
+                    "channel": ""
+                    }
+                conn.send(encode(message))
+        except (ValueError, ConnectionResetError) as e:
+            conn.shutdown(socket.SHUT_RDWR)
+            conn.close()
+            clients.remove(user)
+            break
 
 while True:
     conn, addr = s.accept()
