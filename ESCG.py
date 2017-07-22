@@ -5,6 +5,11 @@ config = []
 print("ECHO SCG")
 inp = input("Server name >>> ")
 config.append(inp)
+inp = input("Input server password/q for no password >>> ")
+if inp == "q":
+    pass
+else:
+    config.append(inp)
 inp = input("Server MOTD >>> ")
 config.append(inp)
 inp = input("Channel name >>> ")
