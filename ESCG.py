@@ -7,7 +7,7 @@ inp = input("Server name >>> ")
 config.append(inp)
 inp = input("Input server password/q for no password >>> ")
 if inp == "q":
-    pass
+    config.append("NOPASSWORD")
 else:
     config.append(inp)
 inp = input("Server MOTD >>> ")
