@@ -5,6 +5,8 @@ from _thread import *
 import pickle
 import random
 
+ECHO_SERVER_VER = "V1.2.5"
+
 try:
     inFile = open('config.txt', 'rb')
     config = pickle.load(inFile)
@@ -48,6 +50,7 @@ global clients
 clients = []
 
 def client_connection_thread(conn, addr):
+    print(addr)
     #========================================
     #These functions will make this a hell of a lot easier
     def encode(data):
@@ -59,46 +62,71 @@ def client_connection_thread(conn, addr):
         data = json.loads(data)
         return(data)
     #========================================
-    if password == "NOPASSWORD":
-        password_required = False
+
+    data = conn.recv(1024)
+    data = decode(data)
+    
+    if data["data"] == ECHO_SERVER_VER:
         message = {
-        "data": "",
-        "msgtype": "NOPASS",
-        "channel": ""
-        }
-        conn.send(encode(message))    
-    else:
-        password_required = True
-        message = {
-        "data": "",
-        "msgtype": "PASSREQ",
+        "data": "rightver",
+        "msgtype": "VERCONF",
         "channel": ""
         }
         conn.send(encode(message))
+        correct_ver = True
 
-        data = conn.recv(1024)
-        data = decode(data)
-
-        if data["data"] == password:
+        if password == "NOPASSWORD":
+            password_required = False
             message = {
-            "data": "rightpass",
-            "msgtype": "PASSCONF",
+            "data": "",
+            "msgtype": "NOPASS",
             "channel": ""
             }
-            conn.send(encode(message))
-            password_accepted = True
+            conn.send(encode(message))    
         else:
+            password_required = True
             message = {
-            "data": "wrongpass",
-            "msgtype": "PASSCONF",
+            "data": "",
+            "msgtype": "PASSREQ",
             "channel": ""
             }
             conn.send(encode(message))
-            conn.shutdown(socket.SHUT_RDWR)
-            conn.close()
-            password_accepted = False
 
-    if password_accepted == True:
+            data = conn.recv(1024)
+            data = decode(data)
+
+            if data["data"] == password:
+                message = {
+                "data": "rightpass",
+                "msgtype": "PASSCONF",
+                "channel": ""
+                }
+                conn.send(encode(message))
+                password_accepted = True
+            else:
+                message = {
+                "data": "wrongpass",
+                "msgtype": "PASSCONF",
+                "channel": ""
+                }
+                conn.send(encode(message))
+                conn.shutdown(socket.SHUT_RDWR)
+                conn.close()
+                password_accepted = False
+        
+    else:
+        message = {
+        "data": "wrongver",
+        "msgtype": "VERCONF",
+        "channel": ""
+        }
+        conn.send(encode(message))
+        correct_ver = False
+        password_accepted = False
+        
+    
+
+    if (password_accepted == True) and (correct_ver == True):
         message = {
         "data": motd,
         "msgtype": "MOTD",
