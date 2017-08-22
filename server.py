@@ -4,8 +4,9 @@ import json
 from _thread import *
 import pickle
 import random
+import time
 
-ECHO_SERVER_VER = "V1.2.5"
+ECHO_SERVER_VER = "V1.3"
 
 try:
     inFile = open('config.txt', 'rb')
@@ -32,13 +33,23 @@ for item in config:
 
 print(channels)
 
+with open("admins.txt") as f:
+    admins = f.readlines()
+admins = [x.strip() for x in admins]
+
+print(admins)
+with open("banlist.txt") as f:
+    banned_ips = f.readlines()
+banned_ips = [x.strip() for x in banned_ips]
+
+print(banned_ips)
+
 host = ""
-port = 6666
+port = 7777
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 try:
-    #s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
     s.bind((host, port))
 except socket.error as e:
     print(e)
@@ -50,7 +61,6 @@ global clients
 clients = []
 
 def client_connection_thread(conn, addr):
-    print(addr)
     #========================================
     #These functions will make this a hell of a lot easier
     def encode(data):
@@ -62,6 +72,28 @@ def client_connection_thread(conn, addr):
         data = json.loads(data)
         return(data)
     #========================================
+    print("Connection from " + str(addr))
+    banned = False
+    for ip in banned_ips:
+        if ip == addr[0]:
+            message = {
+            "data": "banned",
+            "msgtype": "BANCONF",
+            "channel": ""
+            }
+            conn.send(encode(message))
+            banned = True
+            conn.send(encode(message))
+            conn.shutdown(socket.SHUT_RDWR)
+            conn.close()
+    if banned == False:
+        message = {
+            "data": "notbanned",
+            "msgtype": "BANCONF",
+            "channel": ""
+            }
+        conn.send(encode(message))
+    
 
     data = conn.recv(1024)
     data = decode(data)
@@ -77,12 +109,13 @@ def client_connection_thread(conn, addr):
 
         if password == "NOPASSWORD":
             password_required = False
+            password_accepted = True
             message = {
             "data": "",
             "msgtype": "NOPASS",
             "channel": ""
             }
-            conn.send(encode(message))    
+            conn.send(encode(message))
         else:
             password_required = True
             message = {
@@ -132,12 +165,13 @@ def client_connection_thread(conn, addr):
         "msgtype": "MOTD",
         "channel": ""
         }
+        time.sleep(0.5)
         conn.send(encode(message))
                     
-
+		
         data = conn.recv(1024)
         data = decode(data)
-
+        
         
 
         user = {
@@ -183,17 +217,63 @@ def client_connection_thread(conn, addr):
         while True:
             try:
                 data = conn.recv(1024)
-            
                 data = decode(data)
                 if data["msgtype"] == "MSG-SB":
-                    for cl in clients:
-                        if cl["channel"] == data["channel"]:
-                            message = {
-                            "data": data["data"],
-                            "msgtype": "MSG-CB",
-                            "channel": data["channel"]
-                            }
-                            cl["conn"].send(encode(message))
+                    i = data["data"].index("]")
+                    kick = False
+                    ban = False
+                    if data["data"][i + 2] == "/": # Command
+                        if user["addr"][0] in admins:
+                            command = data["data"][(i+2):]
+                            split_command = command.split()
+                            print(split_command)
+                            if split_command[0] == "/ban":
+                                message = {
+                                    "data": "reason_placeholder",
+                                    "msgtype": "BAN",
+                                    "channel": ""
+                                    }
+                                if cl["username"] == split_command[1]:
+                                    target_client = cl
+                                    ban = True
+                            elif split_command[0] == "/kick":
+                                for cl in clients:
+                                    message = {
+                                    "data": "reason_placeholder",
+                                    "msgtype": "KICKED",
+                                    "channel": ""
+                                    }
+                                    if cl["username"] == split_command[1]:
+                                        target_client = cl
+                                        kick = True
+                    if (kick == True) or (ban == True):
+                        target_client["conn"].send(encode(message))
+                        target_client["conn"].shutdown(socket.SHUT_RDWR)
+                        target_client["conn"].close()
+                        clients.remove(target_client)
+                        for cl in clients:
+                            if cl["channel"] == target_client["channel"]:
+                                message = {
+                                "data": target_client["username"],
+                                "msgtype": "CLIENTDISCONN",
+                                "channel": target_client["channel"]
+                                }
+                                cl["conn"].send(encode(message))
+                        if ban == True:
+                            with open("banlist.txt", "a") as f:
+                                f.write(str(target_client["addr"][0]) + "\n")
+                            banned_ips.append(target_client["addr"][0])
+                                    
+                    else: # Message
+                        for cl in clients:
+                            if cl["channel"] == data["channel"]:
+                                message = {
+                                "data": data["data"],
+                                "msgtype": "MSG-CB",
+                                "channel": data["channel"]
+                                }
+                                cl["conn"].send(encode(message))
+                
                         
                 elif data["msgtype"] == "CHANNELJOIN":
                     old_channel = user["channel"]
@@ -227,7 +307,6 @@ def client_connection_thread(conn, addr):
                         else:
                             pass
                 elif data["msgtype"] == "USERLIST":
-                    print("Yes")
                     server_clients_list = []
                     for cl in clients:
                         server_clients_list.append(cl["username"])
