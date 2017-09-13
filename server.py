@@ -5,47 +5,86 @@ from _thread import *
 import pickle
 import random
 import time
+import sqlite3
+import datetime
 
-ECHO_SERVER_VER = "V1.3"
+ECHO_SERVER_VER = "V1.4"
 
-try:
-    inFile = open('config.txt', 'rb')
-    config = pickle.load(inFile)
-    inFile.close()
-except FileNotFoundError:
-    print("Error - Config file not found")
+#========================================
+# SQLite Setup
+
+sqlite3_conn = sqlite3.connect("database.db", check_same_thread=False)
+c = sqlite3_conn.cursor()
+
+tables = [
+    {
+        "name": "banned_ips",
+        "columns": "ip TEXT, date_banned TEXT"
+    },
+    {
+        "name": "admin_ips",
+        "columns": "ip TEXT"
+    },
+    {
+        "name": "chatlogs",
+        "columns": "ip TEXT, username TEXT, channel TEXT, date TEXT, message TEXT"
+    },
+    {
+        "name": "commandlogs",
+        "columns": "ip TEXT, username TEXT, channel TEXT, date TEXT, command TEXT"
+    },
+    {
+        "name": "config",
+        "columns": "data TEXT, type TEXT"
+    },
+]
+
+for table in tables:
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [table["name"]])
+    data = c.fetchall()
+
+    if len(data) <= 0:  # If table doesn't exist
+        c.execute("CREATE TABLE " +
+                  
+                  table["name"] + " (" + table["columns"] + ")")
+
+
+
+#========================================
 
 global channels
 channels = []
 
-servername = config[0]
-print(servername)
-password = config[1]
-print(password)
-motd = config[2]
-print(motd)
+#Setup to check if the Config is not set up correctly
+servername = ""
+password = ""
+chatlog_settings = ""
+motd = ""
+
+
+c.execute("SELECT * FROM config")
+config = c.fetchall()
 
 for item in config:
-    if (item == servername) or (item == motd) or (item==password):
-        pass
+    if item[1] == "servername":
+        servername = item[0]
+    elif item[1] == "password":
+        password = item[0]
+    elif item[1] == "chatlogsetting":
+        chatlog_settings = item[0]
+    elif item[1] == "motd":
+        motd = item[0]
     else:
-        channels.append(item)
+        channels.append(item[0])
 
-print(channels)
-
-with open("admins.txt") as f:
-    admins = f.readlines()
-admins = [x.strip() for x in admins]
-
-print(admins)
-with open("banlist.txt") as f:
-    banned_ips = f.readlines()
-banned_ips = [x.strip() for x in banned_ips]
-
-print(banned_ips)
+admins = []
+c.execute("SELECT * FROM admin_ips")
+data = c.fetchall()
+for item in data:
+    admins.append(item[0])
 
 host = ""
-port = 7777
+port = 6666
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -55,7 +94,7 @@ except socket.error as e:
     print(e)
 
 s.listen(6)
-print("ECHO online")
+print("All ECHO data loaded")
 
 global clients
 clients = []
@@ -72,10 +111,13 @@ def client_connection_thread(conn, addr):
         data = json.loads(data)
         return(data)
     #========================================
-    print("Connection from " + str(addr))
+    
     banned = False
+    c.execute("SELECT * FROM banned_ips")
+    banned_ips = c.fetchall()
     for ip in banned_ips:
-        if ip == addr[0]:
+        if ip[0] == addr[0]:
+            print("Banned ip attempted to connect " + str(addr))
             message = {
             "data": "banned",
             "msgtype": "BANCONF",
@@ -86,17 +128,24 @@ def client_connection_thread(conn, addr):
             conn.send(encode(message))
             conn.shutdown(socket.SHUT_RDWR)
             conn.close()
+            data = {
+            "data": "userbanned",
+            "msgtype": "temp",
+            "channel": ""
+            }
     if banned == False:
+        print("Connection from " + str(addr))
         message = {
             "data": "notbanned",
             "msgtype": "BANCONF",
             "channel": ""
             }
         conn.send(encode(message))
+        user_banned = False
     
 
-    data = conn.recv(1024)
-    data = decode(data)
+        data = conn.recv(1024)
+        data = decode(data)
     
     if data["data"] == ECHO_SERVER_VER:
         message = {
@@ -126,27 +175,35 @@ def client_connection_thread(conn, addr):
             conn.send(encode(message))
 
             data = conn.recv(1024)
-            data = decode(data)
-
-            if data["data"] == password:
-                message = {
-                "data": "rightpass",
-                "msgtype": "PASSCONF",
-                "channel": ""
-                }
-                conn.send(encode(message))
-                password_accepted = True
-            else:
-                message = {
-                "data": "wrongpass",
-                "msgtype": "PASSCONF",
-                "channel": ""
-                }
-                conn.send(encode(message))
-                conn.shutdown(socket.SHUT_RDWR)
-                conn.close()
+            if data == b"":
+                print("Client " + str(addr) + " disconnected")
                 password_accepted = False
-        
+            else:
+                data = decode(data)
+                
+                if data["data"] == password:
+                    message = {
+                    "data": "rightpass",
+                    "msgtype": "PASSCONF",
+                    "channel": ""
+                    }
+                    conn.send(encode(message))
+                    password_accepted = True
+                else:
+                    message = {
+                    "data": "wrongpass",
+                    "msgtype": "PASSCONF",
+                    "channel": ""
+                    }
+                    conn.send(encode(message))
+                    conn.shutdown(socket.SHUT_RDWR)
+                    conn.close()
+                    password_accepted = False
+
+    elif data["data"] == "userbanned":
+        user_banned = True
+        correct_ver = False
+        password_accepted = False
     else:
         message = {
         "data": "wrongver",
@@ -159,12 +216,19 @@ def client_connection_thread(conn, addr):
         
     
 
-    if (password_accepted == True) and (correct_ver == True):
-        message = {
-        "data": motd,
-        "msgtype": "MOTD",
-        "channel": ""
-        }
+    if (password_accepted == True) and (correct_ver == True) and (user_banned == False):
+        if chatlog_settings == "LOGS":
+            message = {
+            "data": motd + " \n    |Notice: This server stores records of all chat messages|",
+            "msgtype": "MOTD",
+            "channel": ""
+            }
+        else:
+            message = {
+            "data": motd,
+            "msgtype": "MOTD",
+            "channel": ""
+            }
         time.sleep(0.5)
         conn.send(encode(message))
                     
@@ -246,7 +310,37 @@ def client_connection_thread(conn, addr):
                                     if cl["username"] == split_command[1]:
                                         target_client = cl
                                         kick = True
+                            elif split_command[0] == "/whois":
+                                date = datetime.datetime.now()
+                                c.execute("INSERT INTO commandlogs (ip, username, channel, date, command) VALUES (?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, data["data"]])
+                                sqlite3_conn.commit()
+                                for cl in clients:
+                                    if cl["username"] == split_command[1]:
+                                        target_addr = cl["addr"]
+                                message = {
+                                    "data": target_addr,
+                                    "msgtype": "MSG-CB",
+                                    "channel": ""
+                                    }
+                            else:
+                                message = {
+                                    "data": "This is not a command",
+                                    "msgtype": "MSG-CB",
+                                    "channel": ""
+                                    }
+                            user["conn"].send(encode(message))
+                                
+                        else:
+                            message = {
+                                    "data": "You are not an admin",
+                                    "msgtype": "MSG-CB",
+                                    "channel": ""
+                                    }
+                            user["conn"].send(encode(message))
                     if (kick == True) or (ban == True):
+                        date = datetime.datetime.now()
+                        c.execute("INSERT INTO commandlogs (ip, username, channel, date, command) VALUES (?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, data["data"]])
+                        sqlite3_conn.commit()
                         target_client["conn"].send(encode(message))
                         target_client["conn"].shutdown(socket.SHUT_RDWR)
                         target_client["conn"].close()
@@ -260,11 +354,20 @@ def client_connection_thread(conn, addr):
                                 }
                                 cl["conn"].send(encode(message))
                         if ban == True:
-                            with open("banlist.txt", "a") as f:
-                                f.write(str(target_client["addr"][0]) + "\n")
-                            banned_ips.append(target_client["addr"][0])
+                            date = datetime.datetime.now()
+                            c.execute("INSERT INTO banned_ips (ip, date_banned) VALUES (?, ?)", [str(target_client["addr"][0]), date])
+                            sqlite3_conn.commit()
+                            #with open("banlist.txt", "a") as f:
+                                #f.write(str(target_client["addr"][0]) + "\n")
+                            #banned_ips.append(target_client["addr"][0])
                                     
-                    else: # Message
+                    elif data["data"][i + 2] != "/": # Message
+                        if chatlog_settings == "LOGS":
+                            date = datetime.datetime.now()
+                            c.execute("INSERT INTO chatlogs (ip, username, channel, date, message) VALUES (?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, data["data"]])
+                            sqlite3_conn.commit()
+                        else:
+                            pass
                         for cl in clients:
                             if cl["channel"] == data["channel"]:
                                 message = {
@@ -320,12 +423,97 @@ def client_connection_thread(conn, addr):
                 conn.shutdown(socket.SHUT_RDWR)
                 conn.close()
                 clients.remove(user)
+                print("Client " + str(addr) + " disconnected")
                 break
     elif password_accepted == False:
         pass
+    elif user_banned == True:
+        print("Banned user attempted to connect")
 
+"""
+servername = item[0]
+    elif item[1] == "password":
+        password = item[0]
+    elif item[1] == "chatlogsetting":
+        chatlog_settings = item[0]
+    elif item[1] == "motd":
+        motd = item[0]
+    else:
+        channels.append(item[0]
+"""
+if (servername=="") or (password=="") or (chatlog_settings=="") or (motd=="") or (channels==[]):
+    print("!!!WARNING!!! Some or all of the config is not setup. Please select option 2 before starting ECHO")
 while True:
-    conn, addr = s.accept()
-    start_new_thread(client_connection_thread, (conn, addr,))
+    print("""
+ECHO Server Administration Menu
+1 - Start ECHO
+2 - Edit Server Config
+3 - Add Admins
+""")
+
+    choice = input(">>> ")
+    if choice == "1":
+        print("Started ECHO")
+        while True:
+            conn, addr = s.accept()
+            start_new_thread(client_connection_thread, (conn, addr,))
+    elif choice == "2":
+        ##############################################################
+        ### NEED TO ADD CODE HERE TO DELETE CONFIG BEFORE CHANGING ###
+        ##############################################################
+        inp = input("Input Server Name >>> ")
+        c.execute("INSERT INTO config (data, type) VALUES (?, ?)", [inp, "servername"])
+        sqlite3_conn.commit()
+
+        inp = input("Input Server MOTD >> ")
+        c.execute("INSERT INTO config (data, type) VALUES (?, ?)", [inp, "motd"])
+        sqlite3_conn.commit()
+
+        inp = input("Input Server Password/q for no password >>> ")
+        if inp == "q":
+            c.execute("INSERT INTO config (data, type) VALUES (?, ?)", ["NOPASSWORD", "password"])
+            sqlite3_conn.commit()
+        else:
+            c.execute("INSERT INTO config (data, type) VALUES (?, ?)", [inp, "password"])
+            sqlite3_conn.commit()
+        while True:
+            inp = input("Store Server Chat Logs? y/n >>> ")
+            if inp == "y":
+                c.execute("INSERT INTO config (data, type) VALUES (?, ?)", ["LOGS", "chatlogsetting"])
+                sqlite3_conn.commit()
+                break
+            elif inp == "n":
+                c.execute("INSERT INTO config (data, type) VALUES (?, ?)", ["NOLOGS", "chatlogsetting"])
+                sqlite3_conn.commit()
+                break
+            else:
+                pass
+        while True:
+            inp = input("Channel Name/q to finish >>> ")
+            if inp == "q":
+                break
+            else:
+                c.execute("INSERT INTO config (data, type) VALUES (?, ?)", [inp, "channel"])
+                sqlite3_conn.commit()
+        c.execute("SELECT * FROM config")
+        config = c.fetchall()
+
+        for item in config:
+            if item[1] == "servername":
+                servername = item[0]
+            elif item[1] == "password":
+                password = item[0]
+            elif item[1] == "chatlogsetting":
+                chatlog_settings = item[0]
+            elif item[1] == "motd":
+                motd = item[0]
+            else:
+                channels.append(item[0])
+    elif choice == "3":
+        inp = input("Input Admin IP >>> ")
+        c.execute("INSERT INTO admin_ips (ip) VALUES (?)", [inp])
+        sqlite3_conn.commit()
+        admins.append(inp)
+       
     
     
