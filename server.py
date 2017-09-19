@@ -8,7 +8,7 @@ import time
 import sqlite3
 import datetime
 
-ECHO_SERVER_VER = "V1.4"
+ECHO_SERVER_VER = "V1.4.2" # DO NOT CHANGE
 
 #========================================
 # SQLite Setup
@@ -19,7 +19,7 @@ c = sqlite3_conn.cursor()
 tables = [
     {
         "name": "banned_ips",
-        "columns": "ip TEXT, date_banned TEXT"
+        "columns": "ip TEXT, date_banned TEXT, reason TEXT"
     },
     {
         "name": "admin_ips",
@@ -31,7 +31,11 @@ tables = [
     },
     {
         "name": "commandlogs",
-        "columns": "ip TEXT, username TEXT, channel TEXT, date TEXT, command TEXT"
+        "columns": "ip TEXT, username TEXT, channel TEXT, date TEXT, command TEXT, reason TEXT"
+    },
+    {
+        "name": "pmlogs",
+        "columns": "ip TEXT, username TEXT, channel TEXT, date TEXT, message TEXT"
     },
     {
         "name": "config",
@@ -83,8 +87,10 @@ data = c.fetchall()
 for item in data:
     admins.append(item[0])
 
-host = ""
-port = 6666
+#################### Change this
+host = ""          # 
+port = 6666        # 
+#################### Change this
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -93,7 +99,7 @@ try:
 except socket.error as e:
     print(e)
 
-s.listen(6)
+s.listen(20)
 print("All ECHO data loaded")
 
 global clients
@@ -118,8 +124,11 @@ def client_connection_thread(conn, addr):
     for ip in banned_ips:
         if ip[0] == addr[0]:
             print("Banned ip attempted to connect " + str(addr))
+            data = []
+            data.append("banned")
+            data.append(ip[2])
             message = {
-            "data": "banned",
+            "data": data,
             "msgtype": "BANCONF",
             "channel": ""
             }
@@ -128,15 +137,12 @@ def client_connection_thread(conn, addr):
             conn.send(encode(message))
             conn.shutdown(socket.SHUT_RDWR)
             conn.close()
-            data = {
-            "data": "userbanned",
-            "msgtype": "temp",
-            "channel": ""
-            }
     if banned == False:
         print("Connection from " + str(addr))
+        data = []
+        data.append("notbanned")
         message = {
-            "data": "notbanned",
+            "data": data,
             "msgtype": "BANCONF",
             "channel": ""
             }
@@ -190,7 +196,7 @@ def client_connection_thread(conn, addr):
                     conn.send(encode(message))
                     password_accepted = True
                 else:
-                    message = {
+                    message = { 
                     "data": "wrongpass",
                     "msgtype": "PASSCONF",
                     "channel": ""
@@ -287,59 +293,88 @@ def client_connection_thread(conn, addr):
                     kick = False
                     ban = False
                     if data["data"][i + 2] == "/": # Command
-                        if user["addr"][0] in admins:
-                            command = data["data"][(i+2):]
-                            split_command = command.split()
-                            print(split_command)
-                            if split_command[0] == "/ban":
-                                message = {
-                                    "data": "reason_placeholder",
-                                    "msgtype": "BAN",
-                                    "channel": ""
-                                    }
+                        command = data["data"][(i+2):]
+                        split_command = command.split()
+                        if split_command[0] == "/pm":
+                            if chatlog_settings == "LOGS":
+                                pm_message = " ".join(split_command[2:])
+                                date = datetime.datetime.now()
+                                c.execute("INSERT INTO pmlogs (ip, username, channel, date, message) VALUES (?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, pm_message])
+                                sqlite3_conn.commit()
+                            else:
+                                pass
+                            for cl in clients:
                                 if cl["username"] == split_command[1]:
                                     target_client = cl
-                                    ban = True
-                            elif split_command[0] == "/kick":
-                                for cl in clients:
+                                    pm_message = " ".join(split_command[2:])
+                                    pm_sendee_data = "{PM from " + split_command[1] + "} " + pm_message
+                                    pm_sender_data = "{PM to " + split_command[1] + "} " + pm_message
                                     message = {
-                                    "data": "reason_placeholder",
-                                    "msgtype": "KICKED",
-                                    "channel": ""
-                                    }
+                                        "data": pm_sendee_data,
+                                        "msgtype": "MSG-CB",
+                                        "channel": ""
+                                        }
+                                    target_client["conn"].send(encode(message))
+                                    message = {
+                                        "data": pm_sender_data,
+                                        "msgtype": "MSG-CB",
+                                        "channel": ""
+                                        }
+                                    conn.send(encode(message))
+                        else:
+                            if user["addr"][0] in admins:
+                                if split_command[0] == "/ban":
+                                    reason = " ".join(split_command[2:])
+                                    message = {
+                                        "data": reason,
+                                        "msgtype": "BAN",
+                                        "channel": ""
+                                        }
                                     if cl["username"] == split_command[1]:
                                         target_client = cl
-                                        kick = True
-                            elif split_command[0] == "/whois":
-                                date = datetime.datetime.now()
-                                c.execute("INSERT INTO commandlogs (ip, username, channel, date, command) VALUES (?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, data["data"]])
-                                sqlite3_conn.commit()
-                                for cl in clients:
-                                    if cl["username"] == split_command[1]:
-                                        target_addr = cl["addr"]
-                                message = {
-                                    "data": target_addr,
-                                    "msgtype": "MSG-CB",
-                                    "channel": ""
-                                    }
+                                        ban = True
+                                elif split_command[0] == "/kick":
+                                    for cl in clients:
+                                        reason = " ".join(split_command[2:])
+                                        message = {
+                                        "data": reason,
+                                        "msgtype": "KICKED",
+                                        "channel": ""
+                                        }
+                                        if cl["username"] == split_command[1]:
+                                            target_client = cl
+                                            kick = True
+                                elif split_command[0] == "/whois":
+                                    date = datetime.datetime.now()
+                                    c.execute("INSERT INTO commandlogs (ip, username, channel, date, command) VALUES (?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, data["data"]])
+                                    sqlite3_conn.commit()
+                                    for cl in clients:
+                                        if cl["username"] == split_command[1]:
+                                            target_addr = cl["addr"]
+                                    message = {
+                                        "data": target_addr,
+                                        "msgtype": "MSG-CB",
+                                        "channel": ""
+                                        }
+                                else:
+                                    message = {
+                                        "data": "This is not a command",
+                                        "msgtype": "MSG-CB",
+                                        "channel": ""
+                                        }
+                                user["conn"].send(encode(message))
+                                    
                             else:
                                 message = {
-                                    "data": "This is not a command",
-                                    "msgtype": "MSG-CB",
-                                    "channel": ""
-                                    }
-                            user["conn"].send(encode(message))
-                                
-                        else:
-                            message = {
-                                    "data": "You are not an admin",
-                                    "msgtype": "MSG-CB",
-                                    "channel": ""
-                                    }
-                            user["conn"].send(encode(message))
+                                        "data": "You are not an admin",
+                                        "msgtype": "MSG-CB",
+                                        "channel": ""
+                                        }
+                                user["conn"].send(encode(message))
                     if (kick == True) or (ban == True):
                         date = datetime.datetime.now()
-                        c.execute("INSERT INTO commandlogs (ip, username, channel, date, command) VALUES (?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, data["data"]])
+                        reason = " ".join(split_command[2:])
+                        c.execute("INSERT INTO commandlogs (ip, username, channel, date, command, reason) VALUES (?, ?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, data["data"], reason])
                         sqlite3_conn.commit()
                         target_client["conn"].send(encode(message))
                         target_client["conn"].shutdown(socket.SHUT_RDWR)
@@ -355,7 +390,8 @@ def client_connection_thread(conn, addr):
                                 cl["conn"].send(encode(message))
                         if ban == True:
                             date = datetime.datetime.now()
-                            c.execute("INSERT INTO banned_ips (ip, date_banned) VALUES (?, ?)", [str(target_client["addr"][0]), date])
+                            reason = " ".join(split_command[2:])
+                            c.execute("INSERT INTO banned_ips (ip, date_banned, reason) VALUES (?, ?, ?)", [str(target_client["addr"][0]), date, reason])
                             sqlite3_conn.commit()
                             #with open("banlist.txt", "a") as f:
                                 #f.write(str(target_client["addr"][0]) + "\n")
@@ -420,9 +456,21 @@ def client_connection_thread(conn, addr):
                         }
                     conn.send(encode(message))
             except (ValueError, ConnectionResetError) as e:
+                print(user["channel"])
+                for cl in clients:
+                    print(cl["channel"])
+                    if cl["channel"] == user["channel"]:
+                        #print("Check")
+                        message = {
+                                "data": user["username"],
+                                "msgtype": "CLIENTDISCONN",
+                                "channel": user["channel"]
+                                }
+                        cl["conn"].send(encode(message))
                 conn.shutdown(socket.SHUT_RDWR)
                 conn.close()
                 clients.remove(user)
+                
                 print("Client " + str(addr) + " disconnected")
                 break
     elif password_accepted == False:
@@ -430,18 +478,7 @@ def client_connection_thread(conn, addr):
     elif user_banned == True:
         print("Banned user attempted to connect")
 
-"""
-servername = item[0]
-    elif item[1] == "password":
-        password = item[0]
-    elif item[1] == "chatlogsetting":
-        chatlog_settings = item[0]
-    elif item[1] == "motd":
-        motd = item[0]
-    else:
-        channels.append(item[0]
-"""
-if (servername=="") or (password=="") or (chatlog_settings=="") or (motd=="") or (channels==[]):
+if (servername=="") or (password=="") or (chatlog_settings=="") or (channels==[]):
     print("!!!WARNING!!! Some or all of the config is not setup. Please select option 2 before starting ECHO")
 while True:
     print("""
