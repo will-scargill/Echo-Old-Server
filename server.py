@@ -126,7 +126,7 @@ def client_connection_thread(conn, addr):
             print("Banned ip attempted to connect " + str(addr))
             data = []
             data.append("banned")
-            data.append(ip[2])
+            data.append(ip[1])
             message = {
             "data": data,
             "msgtype": "BANCONF",
