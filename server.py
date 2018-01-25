@@ -8,7 +8,7 @@ import time
 import sqlite3
 import datetime
 
-ECHO_SERVER_VER = "V1.4.2" # DO NOT CHANGE
+ECHO_SERVER_VER = "V1.5" # DO NOT CHANGE
 
 #========================================
 # SQLite Setup
@@ -41,6 +41,10 @@ tables = [
         "name": "config",
         "columns": "data TEXT, type TEXT"
     },
+    {
+        "name": "tempchatlogs",
+        "columns": "username TEXT, channel TEXT, date TEXT, message TEXT, colour TEXT"
+    }
 ]
 
 for table in tables:
@@ -242,13 +246,14 @@ def client_connection_thread(conn, addr):
         data = conn.recv(1024)
         data = decode(data)
         
-        
+        colours = ["red", "blue", "green", "purple", "magenta", "darkgreen", "brown"]
 
         user = {
             "conn": conn,
             "addr": addr,
             "username": data["data"],
-            "channel": ""
+            "channel": "",
+            "colour" : (random.choice(colours))
             }
         
         for client in clients:
@@ -312,13 +317,15 @@ def client_connection_thread(conn, addr):
                                     message = {
                                         "data": pm_sendee_data,
                                         "msgtype": "MSG-CB",
-                                        "channel": ""
+                                        "channel": "",
+                                        "colour": "black"
                                         }
                                     target_client["conn"].send(encode(message))
                                     message = {
                                         "data": pm_sender_data,
                                         "msgtype": "MSG-CB",
-                                        "channel": ""
+                                        "channel": "",
+                                        "colour": "black"
                                         }
                                     conn.send(encode(message))
                         else:
@@ -354,13 +361,15 @@ def client_connection_thread(conn, addr):
                                     message = {
                                         "data": target_addr,
                                         "msgtype": "MSG-CB",
-                                        "channel": ""
+                                        "channel": "",
+                                        "colour": "black"
                                         }
                                 else:
                                     message = {
                                         "data": "This is not a command",
                                         "msgtype": "MSG-CB",
-                                        "channel": ""
+                                        "channel": "",
+                                        "colour": "black"
                                         }
                                 user["conn"].send(encode(message))
                                     
@@ -368,7 +377,8 @@ def client_connection_thread(conn, addr):
                                 message = {
                                         "data": "You are not an admin",
                                         "msgtype": "MSG-CB",
-                                        "channel": ""
+                                        "channel": "",
+                                        "colour": "black"
                                         }
                                 user["conn"].send(encode(message))
                     if (kick == True) or (ban == True):
@@ -402,14 +412,17 @@ def client_connection_thread(conn, addr):
                             date = datetime.datetime.now()
                             c.execute("INSERT INTO chatlogs (ip, username, channel, date, message) VALUES (?, ?, ?, ?, ?)", [str(user["addr"]), user["username"], user["channel"], date, data["data"]])
                             sqlite3_conn.commit()
+                            c.execute("INSERT INTO tempchatlogs (username, channel, date, message, colour) VALUES (?, ?, ?, ?, ?)", [user["username"], user["channel"], date, data["data"], user["colour"]])
+                            sqlite3_conn.commit()
                         else:
                             pass
                         for cl in clients:
                             if cl["channel"] == data["channel"]:
                                 message = {
-                                "data": data["data"],
+                                "data": ((str(date)[8:][:2]) + (str(date)[4:][:3]) + "|" + (str(date)[11:][:5]) + "| " + data["data"]),
                                 "msgtype": "MSG-CB",
-                                "channel": data["channel"]
+                                "channel": data["channel"],
+                                "colour": user["colour"]
                                 }
                                 cl["conn"].send(encode(message))
                 
@@ -417,6 +430,17 @@ def client_connection_thread(conn, addr):
                 elif data["msgtype"] == "CHANNELJOIN":
                     old_channel = user["channel"]
                     user["channel"] = data["data"]
+
+                    c.execute("SELECT * FROM tempchatlogs WHERE channel=? LIMIT 20", [user["channel"]])
+                    channel_chat_logs = c.fetchall()
+                    message = {
+                        "data": channel_chat_logs,
+                        "msgtype": "CHANNELHISTORY",
+                        "channel": user["channel"]
+                        }
+                    conn.send(encode(message)) 
+
+                    
                     channel_clients_list = []
                     for cl in clients:
                         if cl["channel"] == user["channel"]:
